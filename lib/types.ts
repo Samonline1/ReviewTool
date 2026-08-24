@@ -1,4 +1,3 @@
-
 export interface ReviewLocation {
   id: string;
   name: string;
@@ -19,3 +18,10 @@ export interface Template {
   name: string;
   text: (businessName: string, link: string) => string;
 }
+
+export interface BrandConfig {
+  name: string;
+  url: string;
+}
+
+export type BrandCodeMap = Record<string, BrandConfig>;

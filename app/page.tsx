@@ -1,6 +1,7 @@
+"use client";
 
 import React, { useState, useEffect, useMemo } from 'react';
-import TopPromoBar from "./TopPromoBar"; 
+import TopPromoBar from "../components/TopPromoBar"; 
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   X, 
@@ -27,9 +28,11 @@ import {
   HINDI_TEMPLATES, 
   HINGLISH_TEMPLATES, 
   MOOD_EMOJIS 
-} from './constants';
-import { PartnerData, Mood, Template, Language, ReviewLocation } from './types';
-import brandCodes from './brand-codes.json';
+} from '../lib/constants';
+import { PartnerData, Mood, Template, Language, ReviewLocation, BrandCodeMap, BrandConfig } from '../lib/types';
+import brandCodes from '../lib/brand-codes.json';
+import { getBrandCodeMap, sanitizeBrandCodeMap, validateBrandCode, saveBrandCodeMap } from '../lib/auth';
+import { AdminPanel } from '../components/admin/AdminPanel';
 
 // --- Session Constants ---
 const SESSION_KEY = 'dx_session_expiry';
@@ -38,42 +41,6 @@ const BRAND_CODE_SESSION_KEY = 'dx_brand_code';
 const BRAND_USERS_KEY = 'dx_brand_users';
 const SESSION_DURATION = 15 * 24 * 60 * 60 * 1000; 
 const ADMIN_PANEL_PASSWORD = 'dxadmin2028!';
-
-type BrandCodeMap = Record<string, string>;
-const DEFAULT_BRAND_CODE_MAP = brandCodes as BrandCodeMap;
-
-const sanitizeBrandCodeMap = (value: unknown): BrandCodeMap => {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return {};
-  }
-
-  const cleaned: BrandCodeMap = {};
-  for (const [code, brandName] of Object.entries(value as Record<string, unknown>)) {
-    const normalizedCode = code.trim();
-    const normalizedBrand = typeof brandName === 'string' ? brandName.trim() : '';
-    if (normalizedCode && normalizedBrand) {
-      cleaned[normalizedCode] = normalizedBrand;
-    }
-  }
-  return cleaned;
-};
-
-const getInitialBrandCodeMap = (): BrandCodeMap => {
-  try {
-    const stored = localStorage.getItem(BRAND_USERS_KEY);
-    if (!stored) {
-      return { ...DEFAULT_BRAND_CODE_MAP };
-    }
-    const parsed = JSON.parse(stored);
-    const cleaned = sanitizeBrandCodeMap(parsed);
-    if (Object.keys(cleaned).length === 0) {
-      return { ...DEFAULT_BRAND_CODE_MAP };
-    }
-    return cleaned;
-  } catch {
-    return { ...DEFAULT_BRAND_CODE_MAP };
-  }
-};
 
 type OwnerFeedback = {
   name: string;
@@ -338,297 +305,12 @@ const TemplateSelectionModal = ({
   </AnimatePresence>
 );
 
-const AdminPanel = ({
-  isOpen,
-  onClose,
-  brandCodeMap,
-  onSaveUsers,
-  onResetToDefault
-}: {
-  isOpen: boolean;
-  onClose: () => void;
-  brandCodeMap: BrandCodeMap;
-  onSaveUsers: (nextUsers: BrandCodeMap) => void;
-  onResetToDefault: () => void;
-}) => {
-  const [adminPassword, setAdminPassword] = useState('');
-  const [isAdminUnlocked, setIsAdminUnlocked] = useState(false);
-  const [codeInput, setCodeInput] = useState('');
-  const [brandInput, setBrandInput] = useState('');
-  const [editingCode, setEditingCode] = useState<string | null>(null);
-  const [panelError, setPanelError] = useState('');
-  const [panelSuccess, setPanelSuccess] = useState('');
-
-  useEffect(() => {
-    if (!isOpen) {
-      setAdminPassword('');
-      setIsAdminUnlocked(false);
-      setCodeInput('');
-      setBrandInput('');
-      setEditingCode(null);
-      setPanelError('');
-      setPanelSuccess('');
-    }
-  }, [isOpen]);
-
-  const users = useMemo(
-    () => Object.entries(brandCodeMap).sort((a, b) => a[0].localeCompare(b[0])),
-    [brandCodeMap]
-  );
-
-  const showError = (message: string) => {
-    setPanelSuccess('');
-    setPanelError(message);
-  };
-
-  const showSuccess = (message: string) => {
-    setPanelError('');
-    setPanelSuccess(message);
-  };
-
-  const handleUnlockAdmin = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (adminPassword.trim() === ADMIN_PANEL_PASSWORD) {
-      setIsAdminUnlocked(true);
-      showSuccess('Admin unlocked');
-      return;
-    }
-    showError('Invalid admin password');
-  };
-
-  const handleCreateOrUpdate = (e: React.FormEvent) => {
-    e.preventDefault();
-    const normalizedCode = codeInput.trim();
-    const normalizedBrand = brandInput.trim();
-
-    if (!normalizedCode || !normalizedBrand) {
-      showError('Code and brand name are required');
-      return;
-    }
-
-    const nextUsers = { ...brandCodeMap };
-    if (editingCode && editingCode !== normalizedCode) {
-      delete nextUsers[editingCode];
-    }
-
-    const isDuplicate = (!editingCode || editingCode !== normalizedCode) && Boolean(nextUsers[normalizedCode]);
-    if (isDuplicate) {
-      showError('This code already exists');
-      return;
-    }
-
-    nextUsers[normalizedCode] = normalizedBrand;
-    onSaveUsers(nextUsers);
-
-    setCodeInput('');
-    setBrandInput('');
-    setEditingCode(null);
-    showSuccess(editingCode ? 'User updated' : 'User created');
-  };
-
-  const handleEdit = (code: string, brandName: string) => {
-    setCodeInput(code);
-    setBrandInput(brandName);
-    setEditingCode(code);
-    setPanelError('');
-    setPanelSuccess('');
-  };
-
-  const handleDelete = (code: string) => {
-    const nextUsers = { ...brandCodeMap };
-    delete nextUsers[code];
-    onSaveUsers(nextUsers);
-
-    if (editingCode === code) {
-      setCodeInput('');
-      setBrandInput('');
-      setEditingCode(null);
-    }
-    showSuccess('User deleted');
-  };
-
-  const handleResetDefaults = () => {
-    onResetToDefault();
-    setCodeInput('');
-    setBrandInput('');
-    setEditingCode(null);
-    showSuccess('Reset to default JSON data');
-  };
-
-  return (
-    <AnimatePresence>
-      {isOpen && (
-        <div className="fixed inset-0 z-[130] flex items-center justify-center p-4">
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            onClick={onClose}
-            className="absolute inset-0 bg-slate-900/70 backdrop-blur-sm"
-          />
-          <motion.div
-            initial={{ scale: 0.96, y: 20, opacity: 0 }}
-            animate={{ scale: 1, y: 0, opacity: 1 }}
-            exit={{ scale: 0.96, y: 20, opacity: 0 }}
-            className="relative bg-white w-full max-w-4xl rounded-3xl p-6 sm:p-8 shadow-2xl border border-white max-h-[90vh] overflow-y-auto"
-          >
-            <div className="flex items-center justify-between mb-6">
-              <h3 className="text-xl sm:text-2xl font-black text-slate-900 uppercase tracking-tight">Admin Panel</h3>
-              <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-full transition-colors active:scale-90">
-                <X className="w-6 h-6 text-slate-400" />
-              </button>
-            </div>
-
-            {!isAdminUnlocked ? (
-              <form onSubmit={handleUnlockAdmin} className="space-y-4">
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] block px-1">
-                  Admin Password
-                </label>
-                <input
-                  type="password"
-                  className="w-full px-4 py-4 bg-slate-50 border border-slate-200 rounded-xl font-bold focus:border-blue-500 focus:outline-none shadow-inner"
-                  value={adminPassword}
-                  onChange={(e) => setAdminPassword(e.target.value)}
-                  placeholder="Enter admin password"
-                />
-                <button
-                  type="submit"
-                  className="w-full py-4 bg-slate-900 text-white font-black rounded-xl uppercase tracking-widest text-xs"
-                >
-                  Unlock Admin
-                </button>
-              </form>
-            ) : (
-              <div className="space-y-6">
-                <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 sm:p-5">
-                  <h4 className="text-sm font-black text-slate-900 uppercase tracking-widest mb-4">
-                    {editingCode ? 'Update User' : 'Create User'}
-                  </h4>
-                  <form onSubmit={handleCreateOrUpdate} className="grid sm:grid-cols-3 gap-3">
-                    <input
-                      type="text"
-                      className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl font-bold focus:border-blue-500 focus:outline-none"
-                      placeholder="Code"
-                      value={codeInput}
-                      onChange={(e) => setCodeInput(e.target.value)}
-                    />
-                    <input
-                      type="text"
-                      className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl font-bold focus:border-blue-500 focus:outline-none"
-                      placeholder="Brand Name"
-                      value={brandInput}
-                      onChange={(e) => setBrandInput(e.target.value)}
-                    />
-                    <button
-                      type="submit"
-                      className="w-full px-4 py-3 bg-blue-600 text-white font-black rounded-xl uppercase tracking-widest text-xs"
-                    >
-                      {editingCode ? 'Update User' : 'Create User'}
-                    </button>
-                  </form>
-                  {editingCode && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setCodeInput('');
-                        setBrandInput('');
-                        setEditingCode(null);
-                        setPanelError('');
-                        setPanelSuccess('');
-                      }}
-                      className="mt-3 text-[10px] font-black uppercase tracking-widest text-slate-500 hover:text-slate-700"
-                    >
-                      Cancel editing
-                    </button>
-                  )}
-                </div>
-
-                <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden">
-                  <div className="px-4 py-3 border-b border-slate-200 bg-slate-50 text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">
-                    Registered Users
-                  </div>
-                  <div className="divide-y divide-slate-100">
-                    {users.length === 0 ? (
-                      <div className="px-4 py-6 text-sm text-slate-400 font-bold">No users found.</div>
-                    ) : (
-                      users.map(([code, brandName]) => (
-                        <div key={code} className="px-4 py-4 flex items-center justify-between gap-3">
-                          <div className="min-w-0">
-                            <p className="text-sm font-black text-slate-900 truncate">{brandName}</p>
-                            <p className="text-xs font-bold text-slate-400 truncate">{code}</p>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <button
-                              type="button"
-                              onClick={() => handleEdit(code, brandName)}
-                              className="px-3 py-2 bg-blue-50 text-blue-600 border border-blue-100 rounded-lg text-[10px] font-black uppercase tracking-widest"
-                            >
-                              Edit
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleDelete(code)}
-                              className="px-3 py-2 bg-red-50 text-red-500 border border-red-100 rounded-lg text-[10px] font-black uppercase tracking-widest"
-                            >
-                              Delete
-                            </button>
-                          </div>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </div>
-
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <p className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">JSON Preview</p>
-                    <button
-                      type="button"
-                      onClick={handleResetDefaults}
-                      className="px-3 py-2 bg-slate-100 text-slate-600 rounded-lg text-[10px] font-black uppercase tracking-widest"
-                    >
-                      Reset Defaults
-                    </button>
-                  </div>
-                  <textarea
-                    readOnly
-                    value={JSON.stringify(brandCodeMap, null, 2)}
-                    className="w-full min-h-[170px] px-4 py-3 bg-slate-900 text-slate-200 rounded-xl text-xs font-mono focus:outline-none"
-                  />
-                </div>
-              </div>
-            )}
-
-            {(panelError || panelSuccess) && (
-              <p className={`mt-5 text-xs font-black uppercase tracking-widest ${panelError ? 'text-red-500' : 'text-green-600'}`}>
-                {panelError || panelSuccess}
-              </p>
-            )}
-          </motion.div>
-        </div>
-      )}
-    </AnimatePresence>
-  );
-};
-
-const ReviewBooster = ({ onLogout, lockedBusinessName }: { onLogout: () => void; lockedBusinessName: string }) => {
+const ReviewBooster = ({ onLogout, lockedConfig }: { onLogout: () => void; lockedConfig: BrandConfig }) => {
   const [partnerData, setPartnerData] = useState<PartnerData>(() => {
-    const saved = localStorage.getItem('dx_partner_data');
-    const defaultData: PartnerData = { businessName: lockedBusinessName, location: null };
-    if (saved) {
-      const parsed = JSON.parse(saved);
-      // Data migration for single location if needed
-      if (Array.isArray(parsed.locations)) {
-        return {
-          businessName: lockedBusinessName,
-          location: parsed.locations.find((l: any) => l.id === parsed.activeLocationId) || parsed.locations[0] || null
-        };
-      }
-      return {
-        businessName: lockedBusinessName,
-        location: parsed.location || null
-      };
-    }
+    const defaultData: PartnerData = { 
+      businessName: lockedConfig.name, 
+      location: lockedConfig.url ? { id: 'single-branch', name: lockedConfig.name, url: lockedConfig.url } : null 
+    };
     return defaultData;
   });
 
@@ -641,16 +323,11 @@ const ReviewBooster = ({ onLogout, lockedBusinessName }: { onLogout: () => void;
   const [selectedTemplateIndex, setSelectedTemplateIndex] = useState(0);
 
   useEffect(() => {
-    setPartnerData(prev => (
-      prev.businessName === lockedBusinessName
-        ? prev
-        : { ...prev, businessName: lockedBusinessName }
-    ));
-  }, [lockedBusinessName]);
-
-  useEffect(() => {
-    localStorage.setItem('dx_partner_data', JSON.stringify(partnerData));
-  }, [partnerData]);
+    setPartnerData({
+      businessName: lockedConfig.name,
+      location: lockedConfig.url ? { id: 'single-branch', name: lockedConfig.name, url: lockedConfig.url } : null
+    });
+  }, [lockedConfig]);
 
   const activeLocation = partnerData.location;
   
@@ -934,48 +611,44 @@ const ReviewBooster = ({ onLogout, lockedBusinessName }: { onLogout: () => void;
 // --- Authentication & Session Manager ---
 
 export default function App() {
-  const [brandCodeMap, setBrandCodeMap] = useState<BrandCodeMap>(() => getInitialBrandCodeMap());
+  const [brandCodeMap, setBrandCodeMap] = useState<BrandCodeMap>(() => getBrandCodeMap());
   const [isUnlocked, setIsUnlocked] = useState(false);
   const [activeCode, setActiveCode] = useState('');
-  const [brandName, setBrandName] = useState('');
+  const [activeConfig, setActiveConfig] = useState<BrandConfig | null>(null);
   const [password, setPassword] = useState('');
   const [authError, setAuthError] = useState(false);
   const [showAdminPanel, setShowAdminPanel] = useState(false);
   const [showCodePrompt, setShowCodePrompt] = useState(false);
 
   useEffect(() => {
-    localStorage.setItem(BRAND_USERS_KEY, JSON.stringify(brandCodeMap));
+    saveBrandCodeMap(brandCodeMap);
   }, [brandCodeMap]);
 
   useEffect(() => {
     const expiry = localStorage.getItem(SESSION_KEY);
     const storedCode = localStorage.getItem(BRAND_CODE_SESSION_KEY) || '';
-    const restoredBrand = storedCode ? brandCodeMap[storedCode] : '';
-    if (expiry && parseInt(expiry) > Date.now() && storedCode && restoredBrand) {
+    const { isValid, config } = validateBrandCode(storedCode);
+    if (expiry && parseInt(expiry) > Date.now() && isValid && config) {
       setActiveCode(storedCode);
-      setBrandName(restoredBrand);
+      setActiveConfig(config);
       setIsUnlocked(true);
       return;
     }
-    localStorage.removeItem(SESSION_KEY);
-    localStorage.removeItem(BRAND_CODE_SESSION_KEY);
-    localStorage.removeItem(BRAND_SESSION_KEY);
-    setActiveCode('');
-    setBrandName('');
-    setIsUnlocked(false);
+    handleLogout();
   }, [brandCodeMap]);
 
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
     const enteredCode = password.trim();
-    const matchedBrandName = brandCodeMap[enteredCode];
-    if (matchedBrandName) {
+    const { isValid, config } = validateBrandCode(enteredCode);
+    
+    if (isValid && config) {
       const expiry = Date.now() + SESSION_DURATION;
       localStorage.setItem(SESSION_KEY, expiry.toString());
       localStorage.setItem(BRAND_CODE_SESSION_KEY, enteredCode);
-      localStorage.setItem(BRAND_SESSION_KEY, matchedBrandName);
+      localStorage.setItem(BRAND_SESSION_KEY, config.name);
       setActiveCode(enteredCode);
-      setBrandName(matchedBrandName);
+      setActiveConfig(config);
       setIsUnlocked(true);
       setShowCodePrompt(false);
       setAuthError(false);
@@ -997,7 +670,7 @@ export default function App() {
     localStorage.removeItem(BRAND_SESSION_KEY);
     setIsUnlocked(false);
     setActiveCode('');
-    setBrandName('');
+    setActiveConfig(null);
     setPassword('');
     setShowCodePrompt(false);
   };
@@ -1005,14 +678,16 @@ export default function App() {
   const handleSaveUsers = (nextUsers: BrandCodeMap) => {
     const sanitized = sanitizeBrandCodeMap(nextUsers);
     setBrandCodeMap(sanitized);
+    saveBrandCodeMap(sanitized);
     if (activeCode && !sanitized[activeCode]) {
       handleLogout();
     }
   };
 
-  const handleResetUsers = () => {
-    const defaults = { ...DEFAULT_BRAND_CODE_MAP };
+  const handleResetToDefault = () => {
+    const defaults = getBrandCodeMap();
     setBrandCodeMap(defaults);
+    saveBrandCodeMap(defaults);
     if (activeCode && !defaults[activeCode]) {
       handleLogout();
     }
@@ -1160,12 +835,12 @@ export default function App() {
           onClose={() => setShowAdminPanel(false)}
           brandCodeMap={brandCodeMap}
           onSaveUsers={handleSaveUsers}
-          onResetToDefault={handleResetUsers}
+          onResetToDefault={handleResetToDefault}
         />
       </div>
     );
   }
 
-  return <ReviewBooster onLogout={handleLogout} lockedBusinessName={brandName} />;
+  return activeConfig ? <ReviewBooster onLogout={handleLogout} lockedConfig={activeConfig} /> : null;
 }
 
